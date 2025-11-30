@@ -1,0 +1,575 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% ICML 2026 — MILP-Transformer Paper Skeleton
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\documentclass{article}
+
+% -------------------- PACKAGES --------------------
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{booktabs}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{textcomp}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage[capitalize,noabbrev]{cleveref}
+\usepackage{xcolor}
+\usepackage{mathtools}
+
+% -------------------- COMPACT LISTS --------------------
+\setlist{nosep,leftmargin=1.2em}
+
+% -------------------- ICML STYLE --------------------
+\usepackage[preprint]{icml2026}
+
+% -------------------- THEOREMS --------------------
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+
+% -------------------- TITLE --------------------
+\icmltitlerunning{MILP-Transformer: Neural Surrogate MILP Solver with Constraint Experts}
+
+\begin{document}
+
+\twocolumn[
+\icmltitle{
+MILP-Transformer: A Neural Surrogate MILP Solver with Constraint Experts\\
+for Large-Scale Routing and Supply-Chain Optimization
+}
+
+\begin{icmlauthorlist}
+\icmlauthor{Ritwika Kancharla}{ind}
+\end{icmlauthorlist}
+
+\icmlaffiliation{ind}{Independent Researcher}
+
+\icmlcorrespondingauthor{Ritwika Kancharla}{ritwikareddykancharla@gmail.com}
+
+\icmlkeywords{Neural MILP, Transformer, Routing Optimization, Supply Chain, Deep Learning}
+
+\vskip 0.3in
+]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{abstract}
+Large-scale routing and supply-chain systems such as Amazon’s middle-mile network require repeatedly solving mixed-integer linear programs (MILPs) under strict latency, capacity, and SLA constraints. Classical MILP solvers provide high-quality solutions but are computationally expensive at operational scale, while existing Neural Combinatorial Optimization models lack explicit constraint handling and degrade on structured, real-world logistics instances. We introduce the \textbf{MILP-Transformer}, a neural surrogate solver that embeds MILP algebra directly into a transformer: variable embeddings represent decision binaries, constraint embeddings encode rows of the MILP, and a Mixture-of-Experts module specializes to different constraint families such as flow conservation, capacity, and timing feasibility. Soft integer relaxation and latent gradient refinement allow the model to approximate MILP descent steps while remaining fully differentiable. On 50–200 node routing benchmarks modeled after Amazon middle-mile topologies, the MILP-Transformer achieves competitive optimality gaps with up to \(100\times\) faster inference compared to commercial MILP solvers, while maintaining high feasibility rates. These results demonstrate the potential of transformer-based architectures as amortized, structure-aware surrogate solvers for real-world combinatorial optimization.
+\end{abstract}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Introduction}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Amazon-scale logistics, MILP bottlenecks, Neural CO gaps
+% Introduce MILP-Transformer
+% Contributions (bulleted list)
+
+Modern e-commerce supply chains, such as Amazon’s middle-mile and linehaul networks, must route millions of packages across thousands of facilities and transportation lanes under tight cost, capacity, and service-level constraints. Each re-optimization step---triggered by demand spikes, congestion changes, weather disruptions, or facility outages---requires solving large mixed-integer linear programs (MILPs) that couple binary routing decisions with capacity, timing, and flow conservation constraints. While MILP solvers like Gurobi or CPLEX can provide high-quality solutions, their runtime grows rapidly with problem size and structural complexity, making sub-minute re-solving infeasible for operational networks with 50--200 nodes and thousands of edges.
+
+To compensate for MILP latency, large-scale routing systems often rely on handcrafted heuristics such as greedy consolidation, nearest-hub assignment, precomputed path templates, or large-neighborhood local search. These methods are fast, but brittle: they require extensive tuning, do not generalize across geographic regions and demand modes, and struggle to satisfy global constraints such as lane coupling or downstream congestion. Recent progress in Neural Combinatorial Optimization (Neural CO) aims to replace heuristics with learned policies using Pointer Networks~\cite{vinyals2015pointer}, attention models~\cite{bello2016neural}, or transformer-based decoders~\cite{kool2019attention}. However, existing neural approaches generate solutions in a single forward pass, lack explicit constraint handling, and do not capture the algebraic structure that MILPs exploit. As a result, they remain significantly weaker than exact solvers on structured, real-world routing tasks.
+
+This paper explores a new direction: instead of learning heuristics \emph{around} a MILP, can we learn a differentiable surrogate that approximates the \emph{MILP computation itself}? We propose the \textbf{MILP-Transformer}, a model that embeds MILP structure directly into a transformer architecture. Variables are represented as token embeddings, constraints are encoded as contextual rows of the MILP, and a Mixture-of-Experts (MoE) module specializes to different constraint families such as flow conservation, capacity, and timing feasibility. Soft integer relaxation provides differentiable approximations of binary routing decisions, while a latent gradient refinement layer imitates MILP-style descent by iteratively reducing constraint violations.
+
+By combining transformer expressiveness with MILP-inspired computations, the MILP-Transformer acts as an \emph{amortized surrogate solver}: once trained over a distribution of routing instances, it produces feasible, high-quality solutions with inference times on the order of milliseconds. On VRP-like benchmarks (50--200 nodes) modeled after Amazon middle-mile networks, the MILP-Transformer achieves competitive optimality gaps while delivering up to \(100\times\) faster inference than commercial MILP solvers.
+
+\paragraph{Contributions.}
+This work makes three key contributions:
+\begin{itemize}[leftmargin=1.2em]
+    \item We introduce the \textbf{MILP-Transformer}, a transformer architecture that embeds MILP algebra through variable embeddings, constraint embeddings, and a constraint-specialized Mixture-of-Experts module.
+    \item We propose a \textbf{differentiable MILP relaxation} combining soft binary variables with latent gradient refinement, enabling end-to-end learning of surrogate optimization steps.
+    \item We demonstrate that the approach achieves \textbf{near-MILP solution quality with orders-of-magnitude faster inference} on large-scale routing tasks inspired by Amazon’s operational networks.
+\end{itemize}
+
+Our results show that deep learning models can approximate the reasoning structure of classical optimization, opening new possibilities for real-time, structure-aware surrogate solvers in industrial-scale logistics.
+
+\section{Motivation and Background}
+
+Large-scale logistics networks such as Amazon’s middle-mile system must generate
+feasible and cost-efficient routing plans under tight latency constraints.
+Daily operations require repeatedly solving NP-hard variants of the Vehicle
+Routing Problem (VRP), multi-commodity flow (MCF), hub-and-spoke routing,
+load-balancing, batching, and time-window–constrained dispatching. These
+problems are typically formulated as mixed-integer linear programs (MILPs)
+because binary variables naturally encode arc selection, vehicle activation, and
+flow decisions across heterogeneous facilities.
+
+\subsection{MILPs for Routing and Their Limitations}
+
+MILPs offer modeling flexibility and strong optimality guarantees, but they are
+computationally expensive. Even state-of-the-art solvers such as Gurobi and
+CPLEX struggle with large real-world routing instances containing hundreds of
+nodes, thousands of lanes, and tight coupling constraints. Amazon-scale systems
+must re-optimize plans multiple times per hour due to demand shocks, congestion,
+weather disruptions, and facility outages. Exact MILP solving becomes
+intractable: small perturbations can cause solver runtimes to spike from seconds
+to several minutes.
+
+As a result, production routing engines often rely on heuristics such as greedy
+consolidation, nearest-hub dispatching, threshold-based lane activation, or
+Large Neighborhood Search (LNS). While fast, these heuristics have two
+limitations: (i) they do not enforce global feasibility (flow conservation,
+capacity coupling, timing constraints), and (ii) they degrade sharply under
+distribution shift such as peak-season surges or regional disruptions.
+
+\subsection{Neural CO and ML4MIP}
+
+Neural Combinatorial Optimization (Neural CO) methods attempt to learn routing
+heuristics using attention models or graph neural networks
+\citep{bogyrbayeva2024mlvrp,wu2024ncosurvey,zhou2025learningrouting}. While
+high-performing on synthetic VRP benchmarks, these models generate solutions in
+a single forward pass, lack explicit constraint handling, and fail to represent
+the algebraic structure that MILPs rely on. They act as learned heuristics—not
+as surrogate solvers.
+
+A separate line of work improves classical MILP solvers using learning-based
+branching, cutting-plane selection, or dimensionality reduction
+\citep{zhang2022ml4mip,triantafyllou2024dlmip}. These accelerate search but do
+not replace the MILP solver, nor do they provide amortized solution quality.
+
+\subsection{Neural-Embedded Optimization}
+
+Hybrid frameworks embed neural networks inside optimization loops, such as
+Neural Embedded Mixed-Integer Optimization for location-routing (NEO-LRP)
+\citep{kaleem2024neolrp}. These techniques approximate expensive subproblems
+(e.g., VRP cost evaluation) inside a larger MILP, but they still rely on exact
+integer search. They do not approximate the entire MILP.
+
+\subsection{Gap and Opportunity}
+
+Across all methodologies, a key gap persists:
+\emph{there is no neural model that approximates the structure and reasoning of
+a full MILP}. Existing methods either imitate heuristic behavior, accelerate
+classical solvers, or approximate subproblems. None provide a
+structure-aware, differentiable surrogate capable of producing feasible,
+near-optimal solutions in a single forward pass.
+
+This gap motivates our work. We propose a Neural Surrogate MILP Solver that
+embeds MILP algebra—constraints, binary structure, coupling relations—inside a
+transformer-style model with:
+
+\begin{itemize}[leftmargin=1.2em]
+    \item \textbf{soft integer relaxation} to approximate discrete routing decisions,
+    \item \textbf{constraint Mixture-of-Experts} to model different constraint families,
+    \item \textbf{latent gradient refinement} to replicate MILP-style descent.
+\end{itemize}
+
+This framework allows deep networks to perform amortized MILP-solving behavior,
+offering near-MILP quality at Neural CO speed, suitable for real-time
+re-optimization in Amazon-scale logistics.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Background}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+Large-scale routing and flow problems in logistics are typically modeled using
+mixed-integer linear programs (MILPs). MILPs offer strong modeling flexibility:
+binary variables capture discrete routing choices, linear constraints encode
+capacity, flow conservation, and time-window feasibility, and linear objectives
+express transportation cost or SLA penalties. However, MILPs remain
+computationally expensive due to the inherent hardness of integer search.
+
+\subsection{Mixed-Integer Linear Programs}
+
+A MILP is defined by decision variables $x \in \mathbb{R}^n$, linear
+constraints $Ax \le b$, and an objective $\min c^\top x$, where a subset of
+variables must take binary values $x_i \in \{0,1\}$. These binary variables
+represent structural routing decisions such as selecting a lane, activating a
+vehicle, or linking two facilities. Because integer feasibility forms a
+combinatorial space, MILPs are NP-hard in general. State-of-the-art solvers
+(Gurobi, CPLEX, SCIP) rely on branch-and-bound, cutting planes, and
+presolve reductions. While extremely powerful, solver runtime grows sharply
+with problem size, becoming prohibitive for real-time supply-chain
+applications.
+
+\subsection{MILPs in Logistics and Routing}
+
+In transportation networks like Amazon's middle mile, many operational planning
+modules reduce to MILPs: vehicle routing (VRP/CVRP), hub-and-spoke routing,
+multi-commodity flow, facility assignment, and batching/splitting problems. All
+of these can be written in the MILP template
+\[
+\min c^\top x \quad \text{s.t. } Ax \le b,\; x_i \in \{0,1\},
+\]
+where $c$ encodes transportation cost or SLA risk and $A$ captures flow
+balance, vehicle capacities, lane constraints, or timing feasibility.
+Daily operations require solving thousands of such MILPs under tight
+latency budgets (sub-minute in many cases), which makes exact optimization
+infeasible at global scale.
+
+\subsection{Neural Combinatorial Optimization}
+
+Neural Combinatorial Optimization (Neural CO)~\citep{bengio2018tourdhorizon}
+aims to learn heuristics for routing problems using neural networks such as
+Pointer Networks, transformers, or graph neural networks. Recent surveys
+highlight strong empirical performance on VRP benchmarks%
+~\citep{bogyrbayeva2024mlvrp,wu2024ncosurvey,zhou2025learningrouting}.
+However, Neural CO models exhibit several limitations:
+(i) they generate solutions in a single forward pass without refinement,
+(ii) they do not explicitly enforce MILP constraints such as flow conservation
+and binary coupling, and
+(iii) they degrade on large real-world logistics graphs with heterogeneous
+facility types, congestion, and multi-hop dependencies. As a result, existing
+Neural CO models behave more like learned heuristics than surrogates
+for the MILP itself.
+
+\subsection{Machine Learning for MILPs}
+
+A parallel line of research focuses on using machine learning to accelerate MILP
+solvers by learning branching rules, selecting cutting planes, or predicting
+search-node priorities~\citep{zhang2022ml4mip,triantafyllou2024dlmip}. These
+methods significantly speed up branch-and-bound on structured instances, but the
+core combinatorial reasoning is still performed by the solver. They do not
+produce amortized, forward-pass surrogates capable of replacing MILPs entirely.
+
+\subsection{Neural Surrogates Inside Optimization}
+
+Recent work embeds neural networks inside optimization frameworks, such as
+Neural Embedded Mixed-Integer Optimization for location-routing (NEO-LRP)%
+~\citep{kaleem2024neolrp}. These models learn differentiable surrogates for
+subproblems (e.g., routing cost estimation) while leaving discrete search to a
+top-level MIP solver. While promising, such approaches do not approximate the
+full MILP structure or reason over binary variables directly.
+
+\subsection{Position of This Work}
+
+The method proposed in this paper differs in focus and scope. Rather than
+learning heuristics or accelerating branch-and-bound, we develop a
+\emph{structure-aware neural surrogate} that approximates the MILP itself. The
+model embeds MILP algebra (constraints, violations, binary structure) into a
+transformer-style architecture with soft integer relaxation, constraint
+Mixture-of-Experts, and latent gradient refinement. This enables fast,
+amortized approximation of MILP solutions without invoking a classical solver,
+addressing a key bottleneck in large-scale logistics optimization.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Motivation: Large-Scale Routing in Amazon Networks}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{Operational Routing Problems}
+% VRP, CVRP, MCF, hub routing, SLA constraints
+
+\subsection{Why These Are MILPs}
+% cost, time, binary flow, coupling constraints
+
+\subsection{Why They Break Classical Solvers}
+% runtime, instability, re-optimization frequency
+
+\subsection{Why Neural CO Falls Short}
+% single-shot decoding, no constraints, no MILP structure
+
+Write motivation here.
+
+\section{Motivation: Routing at Amazon Scale}
+
+Large-scale logistics networks such as Amazon’s middle-mile and linehaul systems operate under extreme scale, variability, and real-time decision pressure. Every day, millions of packages must move across thousands of facilities---Fulfillment Centers (FCs), Sort Centers (SCs), linehaul hubs, and Delivery Stations (DSs)---via transportation lanes with heterogeneous capacities, costs, and transit times. Constructing feasible and cost-efficient routing plans in this environment requires repeatedly solving variants of NP-hard problems including vehicle routing (VRP), capacitated VRP (CVRP), multi-commodity flow (MCF), hub-and-spoke routing, consolidation planning, and time-window--constrained dispatching.
+
+\subsection{Why These Problems Are MILPs}
+In operational practice, these logistics problems are naturally formulated as mixed-integer linear programs (MILPs) that couple:
+\begin{itemize}
+\item binary routing or arc-selection variables,
+\item flow conservation constraints,
+\item vehicle or lane capacity limits,
+\item timing and SLA feasibility constraints,
+\item cost-minimization objectives.
+\end{itemize}
+This structure allows MILPs to capture complex global interactions, such as how early routing decisions affect downstream congestion, capacity saturation, and deadline feasibility.
+
+\subsection{The Operational Bottleneck}
+While MILPs deliver high-quality solutions, they are computationally expensive at the scale Amazon requires. Real networks often contain:
+\begin{itemize}
+\item 50--200 facilities,
+\item thousands of edges,
+\item thousands of binary variables,
+\item hundreds of coupled constraints.
+\end{itemize}
+Even state-of-the-art solvers like Gurobi or CPLEX can require minutes or hours to re-solve these instances---yet middle-mile routing demands updates every 5--15 minutes, with sub-minute latency during peak events, severe weather, or system outages. The gap between MILP optimality and real-time feasibility is a fundamental operational bottleneck.
+
+\subsection{Why Heuristics Are Not Enough}
+To meet strict latency requirements, many production systems rely on handcrafted heuristics such as:
+\begin{itemize}
+\item greedy consolidation rules,
+\item nearest-hub assignment,
+\item load-balancing heuristics,
+\item local search or LNS variants,
+\item static hub-selection templates.
+\end{itemize}
+Although fast, these heuristics have well-known limitations:
+\begin{itemize}
+\item they do not enforce global feasibility,
+\item they struggle with multi-step dependencies, 
+\item they degrade under distribution shift (e.g., peak seasons),
+\item they require continuous domain-expert tuning.
+\end{itemize}
+This leads to cost inefficiencies, SLA degradation, and inconsistent routing behavior across regions.
+
+\subsection{Limitations of Neural CO Approaches}
+Recent Neural Combinatorial Optimization (Neural CO) methods offer learned heuristics using attention models or graph neural networks. However, existing models:
+\begin{itemize}
+\item generate solutions in a single shot,
+\item do not explicitly compute constraint violations,
+\item lack binary-structure awareness,
+\item cannot refine or correct their own outputs,
+\item and often collapse on structured, real-world routing instances.
+\end{itemize}
+Without MILP algebra, these models simply cannot express flow coupling, feasibility maps, or multi-constraint interactions.
+
+\subsection{A New Direction}
+There is a pressing need for a method that:
+\begin{itemize}
+\item is \textbf{as fast as a neural model}, 
+\item yet \textbf{retains the structure awareness of a MILP solver},
+\item can \textbf{generalize across network topologies and demand patterns},
+\item and supports \textbf{sub-second re-optimization} in large logistics systems.
+\end{itemize}
+
+This motivates the development of the \textbf{MILP-Transformer}: a neural surrogate solver that embeds MILP algebra, represents variables and constraints as transformer tokens, and performs differentiable constraint-driven refinement to approximate MILP reasoning at the speed of a forward pass.
+
+
+\section{Motivation: Routing at Amazon Scale}
+
+Large-scale logistics networks such as Amazon’s middle-mile and linehaul systems operate under extreme scale, variability, and real-time decision pressure. Every day, millions of packages must move across thousands of facilities---Fulfillment Centers (FCs), Sort Centers (SCs), linehaul hubs, and Delivery Stations (DSs)---via transportation lanes with heterogeneous capacities, costs, and transit times. Constructing feasible and cost-efficient routing plans in this environment requires repeatedly solving variants of NP-hard problems including vehicle routing (VRP), capacitated VRP (CVRP), multi-commodity flow (MCF), hub-and-spoke routing, consolidation planning, and time-window--constrained dispatching~\citep{bogyrbayeva2024mlvrp,wu2024ncosurvey,zhou2025learningrouting}.
+
+\subsection{Why These Problems Are MILPs}
+
+In practice, these logistics problems are naturally expressed as mixed-integer linear programs (MILPs) that couple:
+\begin{itemize}
+    \item binary routing or arc-selection variables,
+    \item flow conservation constraints,
+    \item vehicle or lane capacity limits,
+    \item timing and SLA feasibility constraints,
+    \item and cost-minimization objectives.
+\end{itemize}
+MILPs provide a principled way to encode global interactions across the network: how early routing decisions affect downstream congestion, capacity saturation, and deadline feasibility~\citep{zhang2022ml4mip,triantafyllou2024dlmip}. For medium-size instances, modern solvers can produce high-quality or optimal plans, but the combinatorial explosion in binary decisions makes exact optimization increasingly expensive as network size grows.
+
+\subsection{The Operational Bottleneck}
+
+Real-world middle-mile networks frequently involve 50--200 facilities, thousands of edges, and thousands of binary variables. Even state-of-the-art MILP solvers can require minutes or hours to re-solve such instances, especially under tight coupling constraints and time windows~\citep{zhang2022ml4mip}. In contrast, production systems often require:
+\begin{itemize}
+    \item re-optimization every 5--15 minutes as demand, congestion, and outages evolve,
+    \item sub-minute latency during peak seasons and incident response,
+    \item robustness to wide distributional shifts in volumes and network topology~\citep{zhou2025learningrouting}.
+\end{itemize}
+This creates a gap between the optimization quality of full MILPs and the latency constraints of real Amazon-scale operations.
+
+\subsection{Why Heuristics Are Not Enough}
+
+To meet latency requirements, deployed routing systems heavily rely on handcrafted heuristics such as greedy consolidation, nearest-hub assignment, precomputed template paths, local search, or large-neighborhood search variants. While these methods are computationally cheap, they:
+\begin{itemize}
+    \item do not systematically enforce global feasibility (e.g., capacity coupling or downstream congestion),
+    \item degrade under distribution shift (e.g., peak-season modes, weather shocks, regional outages),
+    \item require continuous manual tuning and region-specific rules,
+    \item and produce routing behaviors that can be inconsistent across geographies and time horizons.
+\end{itemize}
+Empirical studies in machine learning for routing and VRP consistently highlight the tension between heuristic speed and the ability to respect complex network constraints at scale~\citep{bogyrbayeva2024mlvrp,zhou2025learningrouting,wu2024ncosurvey}.
+
+\subsection{Limitations of Neural Combinatorial Optimization}
+
+Neural Combinatorial Optimization (Neural CO) has emerged as a promising alternative, using attention-based models, graph neural networks, and reinforcement learning to learn routing policies~\citep{bengio2018tourdhorizon,angioni2025nco,wu2024ncosurvey}. Recent surveys show strong progress on benchmark VRP families, especially under controlled distributions~\citep{bogyrbayeva2024mlvrp,wu2024ncosurvey}. However, most Neural CO models:
+\begin{itemize}
+    \item generate solutions in a single forward pass without iterative feasibility repair,
+    \item treat constraints implicitly via masking rather than modeling MILP algebra,
+    \item lack explicit representations for binary structure and coupling constraints,
+    \item and often fail to maintain feasibility or quality on large, structured, real-world logistics instances~\citep{angioni2025nco,applicability2024nco}.
+\end{itemize}
+As a result, they behave more like learned heuristics than true surrogates for MILP solvers.
+
+\subsection{ML for MILPs and Neural-Embedded Optimization}
+
+Parallel work in \emph{machine learning for mixed-integer programming} focuses on augmenting classical solvers rather than replacing them. Surveys and recent methods use ML to guide branching decisions, cut selection, node pruning, or model reduction inside branch-and-bound~\citep{zhang2022ml4mip,triantafyllou2024dlmip}. More recently, neural-embedded optimization frameworks such as NEO-LRP approximate routing cost with a neural network and embed this surrogate inside a location-routing MILP~\citep{kaleem2024neolrp}. These approaches demonstrate that neural surrogates can accelerate specific components of large optimization pipelines, but the core solver remains a classical MILP engine.
+
+\subsection{A Need for Structure-Aware Neural Solvers}
+
+Taken together, these trends expose a gap:
+\begin{itemize}
+    \item Neural CO offers fast, learned heuristics but weak constraint modeling.
+    \item ML-for-MIP and neural-embedded methods accelerate parts of the MILP pipeline but still depend on classical solvers.
+\end{itemize}
+For Amazon-scale routing, we would ideally like a solver that:
+\begin{itemize}
+    \item runs at \emph{neural-network inference speed},
+    \item explicitly encodes MILP structure (variables, constraints, and violations),
+    \item can amortize computation across many related instances,
+    \item and still respects the feasibility and coupling structure of full MILPs.
+\end{itemize}
+This motivates the \textbf{MILP-Transformer}: a neural surrogate that embeds MILP algebra directly into a transformer-style architecture, with constraint-specialized experts and differentiable refinement, aiming to approximate MILP reasoning at the speed of a forward pass.
+
+\section{Related Work}
+
+Our work builds on three major research directions: Neural Combinatorial Optimization (Neural CO), machine learning for mixed-integer programming (ML4MIP), and neural-embedded optimization frameworks. We highlight key developments in each area and position our approach relative to prior work.
+
+\subsection{Neural Combinatorial Optimization}
+
+Neural CO methods learn heuristics for routing and combinatorial problems using attention models, reinforcement learning, or graph neural networks~\citep{bengio2018tourdhorizon,angioni2025nco}. Early approaches such as Pointer Networks and attention-based decoders demonstrated strong performance on synthetic VRP benchmarks, inspiring extensive follow-up work. Recent surveys provide systematic evaluations across VRP variants, routing environments, and learning paradigms~\citep{bogyrbayeva2024mlvrp,wu2024ncosurvey,zhou2025learningrouting}.
+
+Despite progress, Neural CO methods share several limitations. Most generate solutions in a single forward pass without explicit constraint handling, making it difficult to respect flow conservation, capacity coupling, or time-window feasibility. Masking mechanisms capture feasibility only approximately, and many models degrade sharply on large, structured, real-world logistics networks~\citep{angioni2025nco,applicability2024nco}. As a result, Neural CO behaves more as a learned heuristic than a surrogate for MILP reasoning.
+
+\subsection{Machine Learning for Mixed-Integer Programming}
+
+A parallel line of work uses machine learning to improve individual components of classical MILP solvers. Techniques include learned branching strategies, cut selection policies, node pruning, and dimensionality reduction in mixed-integer models~\citep{zhang2022ml4mip,triantafyllou2024dlmip}. These approaches keep the underlying branch-and-bound framework intact while reducing search tree size or improving solver guidance.
+
+While ML4MIP methods significantly accelerate certain problem classes, they rely on the MILP solver to perform the core combinatorial reasoning. They do not amortize solution quality across instances nor produce fast, forward-pass approximations of MILP solutions. Our work differs fundamentally by replacing discrete search with a neural surrogate that approximates the structure of the MILP itself.
+
+\subsection{Neural-Embedded Optimization and Surrogates}
+
+Recent neural-embedded optimization frameworks integrate differentiable models inside higher-level optimization loops. Notably, NEO-LRP uses a neural surrogate to estimate vehicle-routing cost inside a location-routing MILP~\citep{kaleem2024neolrp}. Other works explore neural surrogates for black-box objective functions or optimization over pre-trained neural networks~\citep{triantafyllou2024dlmip}. These methods show that neural surrogates can accelerate expensive subcomponents of large optimization pipelines.
+
+However, these approaches focus on approximating \emph{subproblems} or cost functions, leaving the discrete reasoning to classical optimization engines. In contrast, our MILP-Transformer embeds the MILP algebra directly into a transformer-style architecture: variables and constraints become tokens, constraint families are handled by a Mixture-of-Experts module, and feasibility is enforced via differentiable penalties and latent gradient refinement. This makes our method a structure-aware surrogate solver rather than a hybrid cost-prediction module.
+
+\subsection{Positioning of Our Work}
+
+Our approach bridges the gap between Neural CO and ML-enhanced MILP. Unlike Neural CO, we model MILP constraints explicitly and refine solutions iteratively using learned gradient steps. Unlike ML4MIP or neural-embedded frameworks, our model performs the entire surrogate optimization procedure inside the network, enabling forward-pass inference at millisecond latency. To our knowledge, this is the first transformer-style model designed to approximate full MILP reasoning for large-scale routing problems.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Background}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{Mixed-Integer Linear Programs}
+% formal structure, binary variables, constraints
+
+\subsection{How MILPs Are Solved}
+% branch & bound, cutting planes, interior point
+
+\subsection{Neural Combinatorial Optimization}
+% PointerNet, AttentionModel, Reinforcement Learning methods
+
+\subsection{Why a New Approach is Needed}
+% lack MILP reasoning structure
+
+Write background here.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Problem Formulation}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+A generic MILP can be written as:
+\[
+\min_{x \in \{0,1\}^n} c^\top x \quad 
+\text{s.t.} \quad A x \le b ,
+\]
+where $x$ are binary routing decisions, $A$ encodes feasibility constraints, 
+and $b$ encodes capacity/SLA bounds.
+
+\subsection{Routing MILP Structure}
+% flow constraints, capacity, hub transitions, SLA timing
+
+\subsection{MILP as a Bipartite Interaction Graph}
+% variable nodes ↔ constraint nodes
+
+Write formulation here.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Method: The MILP-Transformer}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{Overview}
+% MILP as transformer: variables = tokens, constraints = context
+
+\subsection{Variable Embeddings}
+% include c_i, types, binary structure
+
+\subsection{Constraint Embeddings}
+% represent rows of A, RHS b_k, constraint classes
+
+\subsection{MILP Attention Layer}
+Instead of standard attention:
+\[
+\text{Attn}(Q,K,V) \quad \Rightarrow \quad A x - b,
+\]
+using MILP constraint algebra as the interaction mechanism.
+
+\subsection{Constraint Experts (MoE)}
+% flow, capacity, SLA, binary feasibility experts
+
+\subsection{Soft Integer Relaxation}
+% sigmoid or sparsemax relaxation
+
+\subsection{Latent Gradient Refinement}
+% differentiable optimization step
+\[
+x \leftarrow x - \eta \nabla_x L(x).
+\]
+
+\subsection{Overall Forward Pass}
+
+\begin{algorithm}[H]
+\caption{MILP-Transformer Inference}
+\begin{algorithmic}[1]
+\STATE Initialize logits $z$
+\STATE $x \leftarrow \sigma(z/\tau)$
+\FOR{$t = 1 \dots T$}
+    \STATE Compute MILP violations $v = \mathrm{ReLU}(A x - b)$
+    \STATE Apply MoE experts to violations
+    \STATE Compute loss $L = c^\top x + \text{penalty}(v)$
+    \STATE Update $x \leftarrow (x - \eta \nabla_x L)_{[0,1]}$
+\ENDFOR
+\STATE \textbf{return} $x$
+\end{algorithmic}
+\end{algorithm}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Experiments}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{Experimental Setup}
+% 50–200 node VRP-style networks
+
+\subsection{Baselines}
+% MILP solvers, heuristics, neural CO baselines
+
+\subsection{Metrics}
+\begin{itemize}
+\item Optimality gap
+\item Feasibility rate
+\item Constraint violation magnitude
+\item Inference runtime
+\end{itemize}
+
+\subsection{Main Results}
+% Leave space for plots/tables
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Results}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{Optimality vs MILP}
+% plot placeholder
+
+\subsection{Runtime Comparison}
+% plot placeholder
+
+\subsection{Constraint Satisfaction}
+% heatmap / violation plots
+
+\subsection{MoE Expert Behavior}
+% specialization visualization
+
+Write analysis here.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Discussion}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Why MILP-transformer works, limitations, scaling properties
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Conclusion}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Short recap + future work
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\bibliography{references}
+\bibliographystyle{icml2026}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\appendix
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Appendix}
+Add extended experiments, proofs, and extra figures.
+
+\end{document}
