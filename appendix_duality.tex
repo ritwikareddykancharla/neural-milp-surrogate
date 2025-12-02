@@ -1,0 +1,127 @@
+\section{Connection to Lagrangian and Dual Optimization}
+\label{appendix:duality}
+
+In this appendix, we formalize the relationship between the Neural Surrogate
+MILP Solver and classical Lagrangian dual optimization. Although the model is
+implemented using neural components, its update steps correspond closely to
+primal-dual optimization for LP relaxations of MILPs.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Lagrangian Formulation}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+Consider the LP relaxation of the MILP:
+\[
+\min_{x \in [0,1]^n} c^\top x \quad \text{s.t.} \quad Ax \le b.
+\]
+The Lagrangian is:
+\[
+\mathcal{L}(x,\lambda) = c^\top x + \lambda^\top (Ax - b), \qquad \lambda \ge 0.
+\]
+
+Dual ascent updates:
+\[
+x^{t+1} = \arg\min_{x \in [0,1]^n} \big(c^\top x + \lambda^t{}^\top Ax \big),
+\]
+\[
+\lambda^{t+1} = [\lambda^t + \alpha (Ax^t - b)]_+.
+\]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{MILP Attention as Dual Variables}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+Our MILP Attention layer computes:
+\[
+H = A^\top v, \qquad v = \max(0, Ax - b).
+\]
+
+In dual ascent:
+\[
+\nabla_x \mathcal{L}(x,\lambda) = c + A^\top \lambda.
+\]
+
+Thus:
+\[
+\lambda \;\approx\; v,
+\quad\text{and}\quad
+A^\top v \approx A^\top \lambda,
+\]
+making $v$ an implicit dual estimate.
+
+The attention step:
+\[
+x \leftarrow \mathrm{softmax}(-H) \odot x,
+\]
+is equivalent to a dual-weighted projection that suppresses violations.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Constraint Experts as Nonlinear Dual Multipliers}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+Classical dual updates are linear in violations:
+\[
+\lambda^{t+1} = [\lambda^t + \alpha v]_+.
+\]
+
+Our MoE generalizes this:
+\[
+\lambda^\text{(learned)} = E_k(v),
+\]
+allowing nonlinear penalty structure tailored to different constraint families.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Latent Gradient Refinement as Primal Update}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+Our model updates:
+\[
+x \leftarrow \mathrm{clip}(x - \eta \nabla_x \mathcal{L}(x)),
+\quad 
+\mathcal{L}(x) = c^\top x + \Phi(x),
+\]
+which corresponds to:
+\[
+x^{t+1} =
+\Pi_{[0,1]^n}
+\left( 
+x^t - \eta (c + A^\top \lambda)
+\right).
+\]
+
+Thus the refinement loop is a differentiable surrogate of primal descent.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Summary}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\[
+\begin{aligned}
+\textbf{Dual Variables:} 
+&\qquad 
+v,\; A^\top v,\; E_k(v) 
+&&\approx 
+&& \lambda
+\\[4pt]
+\textbf{Dual Update:} 
+&\qquad
+\lambda \gets \lambda + (Ax - b)_+
+&&\approx
+&& \mathrm{MoE}(v)
+\\[4pt]
+\textbf{Primal Update:}
+&\qquad
+x \gets x - \eta(c + A^\top\lambda)
+&&\approx
+&& x - \eta\nabla_x\mathcal{L}(x)
+\\[4pt]
+\textbf{Dual Projection:}
+&\qquad
+\exp(-(A^\top\lambda))
+&&\approx
+&& \mathrm{MILPAttn}(x)
+\end{aligned}
+\]
+
+The neural solver therefore acts as an amortized, learned surrogate for 
+primal-dual Lagrangian optimization.
