@@ -19,6 +19,7 @@
 \usepackage{xcolor}
 \usepackage{mathtools}
 
+
 % -------------------- COMPACT LISTS --------------------
 \setlist{nosep,leftmargin=1.2em}
 
@@ -484,7 +485,7 @@ We combine the components above into a single forward-pass routine:
 \STATE \textbf{Input:} MILP matrices $(A, b, c)$
 \STATE Initialize logits $\ell \sim \mathcal{N}(0,1)$
 \STATE $x \leftarrow \sigma(\ell / \tau)$    \hfill\textit{(soft binary relaxation)}
-\FOR{$t = 1$ \TO $T$}
+\FOR{$t = 1$ to $T$}
     \STATE $v \leftarrow \max(0, A x - b)$            \hfill\textit{(violations)}
     \STATE $\Phi \leftarrow \mathrm{MoE}(v)$          \hfill\textit{(constraint experts)}
     \STATE $h \leftarrow A^\top v$                    \hfill\textit{(dual-like scores)}
