@@ -19,7 +19,7 @@ jobs:
       # LaTeX compiler
       - uses: xu-cheng/latex-action@v4
         with:
-          root_file: main.tex
+          root_file: main_2.tex
           latexmk_use_lualatex: true
 
       # Updated artifact upload action
