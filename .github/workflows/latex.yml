@@ -20,8 +20,7 @@ jobs:
       - uses: xu-cheng/latex-action@v4
         with:
           root_file: main_2.tex
-          latexmk_use_lualatex: true
-
+          compiler: pdflatex
       # Updated artifact upload action
       - name: Upload PDF
         uses: actions/upload-artifact@v4
