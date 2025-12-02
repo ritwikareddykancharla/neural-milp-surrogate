@@ -1,12 +1,12 @@
-# Neural Surrogate MILP Solver (Paper Repository)
+# Neural Surrogate MILP Solver 
 
-This repository contains the LaTeX source for the paper:
+This repository contains the LaTeX source and code for the paper:
 
 **“Neural Surrogate MILP Solver: Constraint Experts + Differentiable Relaxations for Large-Scale Routing”**  
 *Ritwika Kancharla, 2025.*
 
 📄 **Paper PDF:**  
-➡ [main.pdf](main.pdf)
+➡ [main.pdf](paper/main.pdf)
 
 🧠 **Codebase (RoutingAGI):**  
 ➡ [https://github.com/ritwikareddykancharla/RoutingAGI](https://github.com/ritwikareddykancharla/RoutingAGI.git)
