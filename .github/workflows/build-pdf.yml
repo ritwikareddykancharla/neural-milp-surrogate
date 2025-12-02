@@ -1,0 +1,43 @@
+name: Build ICML PDF
+
+on:
+  workflow_dispatch:        # run manually any time
+  push:                     # auto-build whenever you edit tex/bib files
+    paths:
+      - '**.tex'
+      - '**.bib'
+      - '**.sty'
+      - '**.cls'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout source
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Compile PDF (Overleaf-style latexmk + bibtex)
+      - name: Compile PDF
+        uses: xu-cheng/latex-action@v4
+        with:
+          root_file: main.tex       # <—— your actual tex file
+          latexmk_shell_escape: true
+
+      # Upload artifact for download
+      - name: Upload PDF Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper
+          path: main.pdf            # latexmk outputs main.pdf when root_file is main.tex
+
+      # Commit compiled PDF back to the repo (only on main branch)
+      - name: Commit PDF to Repo
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add main.pdf
+          git commit -m "Update compiled PDF"
+          git push
