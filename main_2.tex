@@ -770,133 +770,122 @@ Overall, the Neural Surrogate MILP Solver delivers:
 These properties make it a promising candidate for real-time 
 re-optimization in large supply-chain networks such as Amazon's 
 middle-mile routing system.
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\section{Discussion}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-The results indicate that a neural surrogate can capture key structural
-properties of large routing MILPs while achieving real-time inference.
-We now discuss why the approach works, where it struggles, and how it
-relates to classical optimization theory.
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\subsection{Why the Surrogate Works}
+\section{Discussion and Future Work}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-The success of the method arises from three interacting principles:
-
-\paragraph{(1) Structural inductive bias from MILP algebra.}
-Unlike Neural CO models that learn heuristics implicitly, our solver
-operates directly on the algebraic structure of the MILP via
-$Ax - b$ violations.  
-This anchors the model to the geometry of the feasible polytope and
-encourages solutions that respect flow, capacity, and activation
-constraints.
-
-\paragraph{(2) Expert specialization through MoE.}
-The Mixture-of-Experts layer isolates different constraint families
-(flow, capacity, timing/SLA).  
-This separation mirrors how classical solvers treat substructures (e.g.,
-cut families, knapsack constraints, time-window constraints) and enables
-emergent specialization similar to large MoE language models.
-
-\paragraph{(3) Latent refinement as learned optimization.}
-The refinement loop functions as a learned proxy for interior-point or
-dual-descent steps:  
-penalty terms act like barrier functions, while iterative updates
-improve feasibility.  
-This hybridizes numerical optimization with neural inference, giving the
-model robustness to imperfect initial predictions.
+This work demonstrates that neural surrogate optimization can capture
+the structural behavior of routing MILPs while offering real-time
+inference.  
+Unlike conventional Neural CO models that operate as learned heuristics,
+our surrogate incorporates MILP algebra directly into the forward pass,
+producing solutions that respect constraint geometry and exhibit
+meaningful feasibility patterns.  
+We now discuss why the method works, where it falls short, and how it
+may evolve toward large-scale, foundation-style optimization models.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\subsection{Relation to Classical Optimization}
+\subsection{Why Neural Surrogates Work}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-Conceptually, the surrogate resembles a fixed-computation 
-approximation to Lagrangian-relaxation or dual ascent methods.  
-Constraint penalties correspond to dual variables, and refinement steps
-approximate primal updates:
-\[
-x \leftarrow x - \eta \nabla_x \big(c^\top x + \lambda^\top(Ax - b)_+\big).
-\]
-Unlike classical dual methods, however, the dual weights are 
-implicit and learned through MoE gating rather than updated explicitly.
-This amortizes computation: once trained, the model achieves in
-milliseconds what dual methods require many iterations to refine.
+Three factors contribute to the effectiveness of the approach:
 
-Similarly, the approach shares affinity with interior-point methods:
-soft relaxations mimic logarithmic barriers, and the surrogate refinement
-reduces constraint violation in a smooth trajectory.
+\paragraph{(1) MILP-Induced Inductive Bias.}
+By embedding $Ax - b$ into the model’s computation and training
+objective, the surrogate learns the geometry of the feasible region
+instead of memorizing solutions.  
+This gives stronger generalization than direct one-shot Neural CO
+decoders.
+
+\paragraph{(2) Expert Specialization.}
+The MoE layer enables different constraint families---flow, capacity,
+timing/SLA, activation---to be handled by dedicated neural experts,
+mirroring the specialization of cut families or dual variables in
+classical solvers.  
+This structured decomposition is rarely explored in Neural CO literature
+and is a key reason for improved feasibility.
+
+\paragraph{(3) Differentiable Refinement.}
+The latent refinement loop behaves like a fixed-budget approximation to
+dual ascent or interior-point steps.  
+Instead of searching a combinatorial branch-and-bound tree, the model
+performs a small number of smooth corrective updates that can be trained
+end-to-end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \subsection{Limitations}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%}
 
-Despite strong empirical performance, several limitations remain:
+Despite promising results, several limitations remain:
 
 \begin{itemize}[leftmargin=1.2em,itemsep=2pt]
-    \item \textbf{No exact optimality guarantees.}  
-    The surrogate produces high-quality approximations but cannot certify
-    global optimality or provide bounds.
+    \item \textbf{No optimality guarantees.}  
+    The method approximates MILPs but does not provide certified bounds.
+    
+    \item \textbf{Generalization beyond routing.}  
+    Performance deteriorates on MILP families that differ dramatically
+    from routing/flow problems unless retrained.
 
-    \item \textbf{Generalization to unseen MILP families.}  
-    The model generalizes well across routing-like problems, but may
-    perform poorly on unrelated MILP structures (e.g., matching,
-    scheduling, bin-packing) without retraining.
+    \item \textbf{Constraint expressiveness.}  
+    Highly non-linear or disjunctive constraints (e.g., big-$M$ time
+    windows with discontinuities) may be difficult for experts to model.
 
-    \item \textbf{Constraint representation complexity.}  
-    Very large or non-linear (piecewise, big-M, disjunctive) constraints
-    may be difficult for the MoE to capture faithfully.
-
-    \item \textbf{Stability vs.\ sharpness.}  
-    Harder relaxations $\tau\!\to\!0$ improve discrete fidelity but can
-    destabilize training, while softer relaxations reduce feasibility.
+    \item \textbf{Refinement stability.}  
+    Very sharp relaxations $\tau\!\to\!0$ can cause unstable training
+    dynamics, while softer relaxations reduce discrete fidelity.
 \end{itemize}
 
-These limitations are typical of learned optimization but provide
-direction for future extensions.
+These limitations suggest that surrogate MILP solvers should be viewed
+as complementary to, rather than a replacement for, exact optimization.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\subsection{Future Directions}
+\subsection{Future Work}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%}
 
-Several developments could substantially expand the capability of neural
-surrogate solvers:
+Several directions could significantly extend the capability of neural
+MILP surrogates:
 
-\begin{itemize}[leftmargin=1.2em,itemsep=2pt]
-    \item \textbf{Autoregressive planning.}  
-    Extending the solver to sequential decision-making (à la LRM
-    routing) would enable multi-route generation for full-day
-    transportation plans.
+\paragraph{Diffusion Models for Discrete Batching and Routing.}
+Diffusion models provide powerful generative priors for structured
+discrete sets.  
+Combining diffusion processes with MILP relaxations could enable
+high-quality proposal distributions for batching, clustering, or
+multi-route generation under Amazon-style SLAs.
 
-    \item \textbf{Hybrid MILP--Neural pipelines.}  
-    Using the surrogate to warm-start Gurobi or CPLEX may drastically
-    reduce exact solver runtime.
+\paragraph{World Models for Multi-Step Logistics Planning.}
+Routing decisions propagate congestion and SLA slack through time.
+A learned world model predicting future logistics states would allow
+long-horizon planning similar to model-based RL or MuZero.  
+Coupling a MILP surrogate with a world model may yield an end-to-end
+planner capable of optimizing entire daily transportation plans.
 
-    \item \textbf{Graph-aware architectures.}  
-    Incorporating Graphormer or message-passing layers may improve
-    long-range dependence modeling on large networks.
+\paragraph{Generative MILP Priors and Pretraining.}
+Large pre-trained models over diverse MILPs could produce universal
+feasibility priors, analogous to foundation models for language.  
+Such priors may dramatically improve convergence and generalization.
 
-    \item \textbf{Expert expansion.}  
-    Increasing MoE width and routing granularity could mimic the
-    specialization patterns observed in DeepSeek-style architectures.
+\paragraph{Hybrid Neural--MILP Pipelines.}
+The surrogate can warm-start Gurobi or CPLEX, reducing branch-and-bound
+depth and enabling near-optimal solutions under strict time budgets.
 
-    \item \textbf{Foundation models for optimization.}  
-    Large, pretrained MILP surrogates across many domains could serve as
-    universal amortized solvers for industrial-scale combinatorial 
-    optimization.
-\end{itemize}
+\paragraph{Graph-Based Architectures.}
+Integrating Graphormer or SSM-based architectures (e.g., Mamba) may
+enhance long-range dependency modeling and improve refinement stability
+on large networks.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\subsection{Takeaway}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%}
+\subsection{Closing Remarks}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-Neural surrogate MILP solvers occupy a promising middle ground between
-exact optimization and neural heuristics.  
-They combine the structural clarity of MILPs with the scalability of
-deep learning and provide a compelling direction for real-time
-decision-making in Amazon-scale supply-chain networks.
+Neural surrogate MILP solvers represent a promising convergence of deep
+learning and classical combinatorial optimization.  
+By embedding constraint algebra, specialization, and refinement into a
+single differentiable architecture, these models offer a practical path
+toward real-time, high-scale optimization in Amazon’s middle-mile and
+global supply-chain systems.  
+Future extensions involving diffusion priors, world models, and hybrid
+solver pipelines may push this line of work toward general-purpose,
+foundation-style optimization models.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
