@@ -1,6 +1,10 @@
 name: Build PDF
 
 on:
+  # Manual trigger
+  workflow_dispatch:
+
+  # Optional: still run on push if you want
   push:
     paths:
       - '**.tex'
@@ -13,15 +17,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Updated checkout action
       - uses: actions/checkout@v4
 
-      # LaTeX compiler
-      - uses: xu-cheng/latex-action@v4
+      - name: Build PDF
+        uses: xu-cheng/latex-action@v4
         with:
           root_file: main_2.tex
-          compiler: pdflatex
-      # Updated artifact upload action
+          # REMOVE compiler: pdflatex → use latexmk so bibtex works
+          latexmk_shell_escape: true
+
       - name: Upload PDF
         uses: actions/upload-artifact@v4
         with:
