@@ -5,17 +5,26 @@ on:
     paths:
       - '**.tex'
       - '**.bib'
+      - '**.cls'
+      - '**.sty'
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
+      # Updated checkout action
+      - uses: actions/checkout@v4
+
+      # LaTeX compiler
       - uses: xu-cheng/latex-action@v3
         with:
           root_file: main.tex
+          latexmk_use_lualatex: true
+
+      # Updated artifact upload action
       - name: Upload PDF
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: paper
           path: main.pdf
