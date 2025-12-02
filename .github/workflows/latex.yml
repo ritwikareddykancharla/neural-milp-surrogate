@@ -22,7 +22,7 @@ jobs:
       - name: Build PDF
         uses: xu-cheng/latex-action@v4
         with:
-          root_file: main_2.tex
+          root_file: main.tex
           # REMOVE compiler: pdflatex → use latexmk so bibtex works
           latexmk_shell_escape: true
 
