@@ -1,0 +1,44 @@
+name: Build ICML PDF
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '**.tex'
+      - '**.bib'
+      - '**.sty'
+      - '**.cls'
+
+permissions:
+  contents: write    
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}   # auto provided
+
+      - name: Compile PDF
+        uses: xu-cheng/latex-action@v4
+        with:
+          root_file: main.tex
+          latexmk_shell_escape: true
+
+      - name: Upload PDF Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper
+          path: main.pdf
+
+      - name: Commit PDF to Repo
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add main.pdf
+          git commit -m "Update compiled PDF" || echo "No changes to commit"
+          git push
